@@ -37,6 +37,7 @@ class AlertSystem:
         reason: str,
         detection_type: str = "unknown",
         signals: dict | None = None,
+        log_safe: bool = False,
     ) -> dict | None:
         """
         Trigger alert if threat != SAFE and cooldown elapsed.
@@ -53,13 +54,15 @@ class AlertSystem:
             Category: 'weapon', 'fight', 'combined'.
         signals : dict | None
             Raw detection signals for ML feedback (YOLO conf, fight score, etc.).
+        log_safe : bool
+            If True, allows logging SAFE frames for review (missed threats).
 
         Returns
         -------
         dict | None
             Alert record with unique ID, or None if suppressed/safe.
         """
-        if threat_level == "SAFE":
+        if threat_level == "SAFE" and not log_safe:
             return None
 
         now = datetime.now()

@@ -130,6 +130,16 @@ class FeedbackStore:
             conn.commit()
             self._close_conn(conn)
 
+    def clear_all(self):
+        """Clear all feedback data and reset tables."""
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute("DELETE FROM alerts")
+            conn.execute("DELETE FROM model_history")
+            conn.execute("DELETE FROM calibration_history")
+            conn.commit()
+            self._close_conn(conn)
+
     # ------------------------------------------------------------------
     # Record & feedback
     # ------------------------------------------------------------------
@@ -231,6 +241,8 @@ class FeedbackStore:
 
         tp = sum(1 for a in labelled if a["verdict"] == "true_positive")
         fp = sum(1 for a in labelled if a["verdict"] == "false_positive")
+        fn = sum(1 for a in labelled if a["verdict"] == "false_negative")
+        tn = sum(1 for a in labelled if a["verdict"] == "true_negative")
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
 
         # Per-category
@@ -255,6 +267,8 @@ class FeedbackStore:
             "pending": self.count_total() - len(labelled),
             "true_positives": tp,
             "false_positives": fp,
+            "false_negatives": fn,
+            "true_negatives": tn,
             "precision": round(precision, 3),
             "by_category": categories,
         }
@@ -351,6 +365,16 @@ class ThreatMetaClassifier:
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             joblib.dump(self.model, self.model_path)
 
+    def clear_model(self):
+        """Reset the model in memory and on disk."""
+        self.model = None
+        self._last_trained_count = 0
+        if os.path.exists(self.model_path):
+            try:
+                os.remove(self.model_path)
+            except Exception as e:
+                print(f"[WARNING] Could not delete model file: {e}")
+
     # ------------------------------------------------------------------
     def is_active(self) -> bool:
         """Whether the model has been trained and is ready for inference."""
@@ -404,7 +428,8 @@ class ThreatMetaClassifier:
                     signals["hour_of_day"] = 12
 
             feat = self.extract_features(signals)
-            label = 1 if alert["verdict"] == "true_positive" else 0
+            # Both 'true_positive' (correct alarm) and 'false_negative' (missed threat) mean the actual state is a THREAT.
+            label = 1 if alert["verdict"] in ("true_positive", "false_negative") else 0
 
             X_list.append(feat.flatten())
             y_list.append(label)
@@ -537,13 +562,12 @@ class ParameterOptimizer:
     sensitivity, and fight threshold by replaying labelled feedback data.
     """
 
-    # Search grids
-    YOLO_CONF_RANGE = np.arange(0.20, 0.85, 0.05)
-    MOTION_SENS_RANGE = np.arange(0.10, 0.95, 0.05)
-    FIGHT_THRESH_RANGE = np.arange(0.30, 0.85, 0.05)
-
     def __init__(self, store: FeedbackStore):
         self.store = store
+        # Search grids
+        self.YOLO_CONF_RANGE = np.arange(0.20, 0.85, 0.05)
+        self.MOTION_SENS_RANGE = np.arange(0.10, 0.95, 0.05)
+        self.FIGHT_THRESH_RANGE = np.arange(0.30, 0.85, 0.05)
 
     def optimize(self) -> dict | None:
         """
@@ -575,7 +599,7 @@ class ParameterOptimizer:
                 "arm_speed": signals.get("arm_speed", 0.0),
                 "leg_speed": signals.get("leg_speed", 0.0),
                 "proximity": signals.get("proximity", 0.0),
-                "is_true": alert["verdict"] == "true_positive",
+                "is_true": alert["verdict"] in ("true_positive", "false_negative"),
             })
 
         if len(records) < 10:

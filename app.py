@@ -313,6 +313,12 @@ with st.sidebar:
         else:
             st.warning(f"⚠ Need {meta_clf.MIN_SAMPLES}+ labelled alerts")
 
+    if st.button("🗑  CLEAR FEEDBACK DB"):
+        feedback_store.clear_all()
+        meta_clf.clear_model()
+        st.session_state.pop("calibrated", None)
+        st.rerun()
+
     render_ml_status_sidebar(meta_clf, feedback_store)
 
     # Show calibration result if available
@@ -620,17 +626,21 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
             }
 
             # ── Alert + Feedback logging ──
+            # Optionally log SAFE frames if there's activity to allow reviewing missed threats
+            log_safe_frame = (threat_level == "SAFE" and (people_count > 0 or motion_score > 0.3))
             alert_record = alert_sys.trigger(
                 frame, threat_level, reason,
                 detection_type=det_type, signals=signals,
+                log_safe=log_safe_frame
             )
             if alert_record:
-                st.session_state.alert_history.append({
-                    "time": alert_record["timestamp"],
-                    "level": alert_record["level"],
-                    "msg": alert_record["reason"],
-                })
-                st.session_state.total_alerts += 1
+                if alert_record["level"] != "SAFE":
+                    st.session_state.alert_history.append({
+                        "time": alert_record["timestamp"],
+                        "level": alert_record["level"],
+                        "msg": alert_record["reason"],
+                    })
+                    st.session_state.total_alerts += 1
                 # Log to feedback DB for ML training
                 feedback_store.record_alert(
                     alert_id=alert_record["alert_id"],

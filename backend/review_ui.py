@@ -172,16 +172,28 @@ def render_review_panel(feedback_store, meta_clf):
 
         # Verdict buttons
         col_tp, col_fp = st.columns(2)
-        with col_tp:
-            if st.button("✅ TRUE THREAT", key=f"tp_{aid}"):
-                feedback_store.submit_feedback(aid, "true_positive")
-                _maybe_retrain(meta_clf, feedback_store)
-                st.rerun()
-        with col_fp:
-            if st.button("❌ FALSE ALARM", key=f"fp_{aid}"):
-                feedback_store.submit_feedback(aid, "false_positive")
-                _maybe_retrain(meta_clf, feedback_store)
-                st.rerun()
+        if alert.get("threat_level") == "SAFE":
+            with col_tp:
+                if st.button("✅ TRUE SAFE", key=f"tn_{aid}"):
+                    feedback_store.submit_feedback(aid, "true_negative")
+                    _maybe_retrain(meta_clf, feedback_store)
+                    st.rerun()
+            with col_fp:
+                if st.button("❌ MISSED THREAT", key=f"fn_{aid}"):
+                    feedback_store.submit_feedback(aid, "false_negative")
+                    _maybe_retrain(meta_clf, feedback_store)
+                    st.rerun()
+        else:
+            with col_tp:
+                if st.button("✅ TRUE THREAT", key=f"tp_{aid}"):
+                    feedback_store.submit_feedback(aid, "true_positive")
+                    _maybe_retrain(meta_clf, feedback_store)
+                    st.rerun()
+            with col_fp:
+                if st.button("❌ FALSE ALARM", key=f"fp_{aid}"):
+                    feedback_store.submit_feedback(aid, "false_positive")
+                    _maybe_retrain(meta_clf, feedback_store)
+                    st.rerun()
 
         st.markdown("---")
 
@@ -190,8 +202,12 @@ def render_review_panel(feedback_store, meta_clf):
     if reviewed:
         st.markdown(f'<div class="section-title">✓ RECENTLY REVIEWED ({len(reviewed)})</div>', unsafe_allow_html=True)
         for r in reviewed:
-            vc = "#00ffa3" if r["verdict"] == "true_positive" else "#ff2255"
-            vt = "TRUE ✓" if r["verdict"] == "true_positive" else "FALSE ✗"
+            if r["verdict"] in ("true_positive", "false_negative"):
+                vc = "#00ffa3" if r["verdict"] == "true_positive" else "#ff8c00"
+                vt = "TRUE ✓" if r["verdict"] == "true_positive" else "MISSED ✗"
+            else:
+                vc = "#00ffa3" if r["verdict"] == "true_negative" else "#ff2255"
+                vt = "SAFE ✓" if r["verdict"] == "true_negative" else "FALSE ✗"
             st.markdown(f"""
             <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #0d2035;">
               <span style="font-size:11px;color:#3a6080;font-family:'Share Tech Mono',monospace;">{r.get('timestamp','')} · {r.get('threat_level','')}</span>
