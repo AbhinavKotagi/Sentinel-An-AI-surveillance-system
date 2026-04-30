@@ -1,11 +1,20 @@
 # 🛡️ SENTINEL — Real-Time AI Threat Detection System
 
-A hackathon-ready Streamlit surveillance dashboard with simulated AI detections,
-real-time threat levels, bounding-box overlays, and a live alert log.
+A complete, end-to-end surveillance dashboard powered by Streamlit, featuring live YOLO object detection, MediaPipe pose estimation for fight analysis, and a human-in-the-loop ML feedback engine to dynamically suppress false alarms.
 
 ---
 
-## Quick Start
+## 🔥 Key Features
+
+* **Real-Time AI Pipeline**: Integrates YOLOv8 for person/weapon detection and MediaPipe for skeletal pose estimation.
+* **Fight & Motion Analysis**: Calculates arm/leg speed and body proximity to accurately detect altercations.
+* **Human-in-the-Loop Feedback**: A dedicated Review UI to mark alerts as True/False Positives.
+* **Auto-Calibration & ML Filtering**: Trains a `GradientBoostingClassifier` on the fly to suppress likely false alarms and provides one-click parameter optimization for the dashboard sliders.
+* **Local SQLite Logging**: All alerts, snapshots, and raw detection signals are persisted to a local database.
+
+---
+
+## 🚀 Quick Start
 
 ### 1 — Install dependencies
 
@@ -13,8 +22,7 @@ real-time threat levels, bounding-box overlays, and a live alert log.
 pip install -r requirements.txt
 ```
 
-> **Note:** On headless servers (no display) use `opencv-python-headless`.  
-> If you have a local desktop with a webcam you can also use `opencv-python`.
+> **Note:** The first time you run the app, Ultralytics will automatically download the YOLOv8 model weights.
 
 ---
 
@@ -28,69 +36,58 @@ The browser will open automatically at **http://localhost:8501**.
 
 ---
 
-## Usage
+## 🖥️ Usage Guide
 
-| Step | Action |
-|------|--------|
-| 1 | Open the sidebar and choose **Webcam** or **Video File** |
-| 2 | (Optional) Upload an `.mp4 / .avi / .mov` file |
-| 3 | Adjust **Weapon Sensitivity**, **Motion Threshold**, and **Target FPS** |
-| 4 | Click **▶ START MONITORING** |
-| 5 | Watch threat levels, bounding boxes, and alerts update in real time |
-| 6 | Click **■ STOP MONITORING** to pause |
-| 7 | Click **🗑 CLEAR ALERT LOG** to reset history |
+### Normal Monitoring Mode
+1. Open the sidebar and choose **Webcam** or **Video File**.
+2. (Optional) Upload an `.mp4 / .avi / .mov` file.
+3. Adjust **YOLO Confidence** and **Motion Sensitivity**.
+4. Click **▶ START MONITORING**.
+5. Watch the threat levels, bounding boxes, skeletal overlays, and alerts update in real-time.
+
+### ML Feedback & Review Mode
+1. Click **📋 REVIEW ALERTS** in the sidebar.
+2. The main feed will switch to an Accuracy Dashboard showing precision, recall, and feature importances.
+3. Review pending alerts. Click **✅ TRUE THREAT** or **❌ FALSE ALARM** on the generated snapshots to log feedback.
+4. Once you have labelled at least 30 samples, the system will automatically train the ML filter and suppress false alarms.
+5. Click **🎯 AUTO-CALIBRATE** to replay your labelled data and automatically find the optimal slider thresholds for maximum accuracy.
 
 ---
 
-## Threat Logic
+## ⚡ Threat Logic
 
 | Condition | Level |
 |-----------|-------|
-| Weapon + multiple people | 🔴 CRITICAL |
+| Weapon + Multiple People | 🔴 CRITICAL |
 | Weapon detected only | 🟠 HIGH |
-| ≥2 people + high motion | 🟡 MEDIUM |
+| Active Fight Detected | 🟠 HIGH |
+| ≥2 people + High Motion | 🟡 MEDIUM |
 | High motion only | 🟡 MEDIUM |
 | None of the above | 🟢 SAFE |
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
-app.py
-├── simulate_detection()   — Frame-diff motion + randomised detections
-├── compute_threat()       — Threat level logic
-├── draw_overlays()        — OpenCV bounding boxes + HUD elements
-└── Streamlit layout       — Sidebar · Video · Threat panel · Alert log
+backend/
+├── detector.py      — YOLOv8 inference (Persons, Weapons)
+├── pose.py          — MediaPipe skeletal tracking
+├── motion.py        — Structural Similarity Index (SSIM) based motion detection
+├── logic.py         — Fight detection math (speed/proximity) & threat aggregation
+├── alert.py         — Alert generation, JSON snapshot saving
+├── feedback.py      — SQLite DB, GradientBoosting classifier, Parameter GridSearch
+└── review_ui.py     — Streamlit feedback dashboard components
+app.py               — Main Streamlit app layout & real-time video loop
 ```
 
 ---
 
-## Tips for Demo Day
+## ⚙️ How the ML Feedback Engine Works
 
-* Run on a **laptop with a webcam** for maximum impact — wave your hands to
-  trigger high motion scores.
-* Use a pre-recorded video of a busy scene to guarantee detections every run.
-* Lower **Target FPS** to `8–10` if the machine is slow; the UI stays smooth.
-* The **Weapon Sensitivity** slider lets you force frequent HIGH/CRITICAL alerts
-  for a dramatic live demo — crank it up just before presenting.
+Instead of retraining the heavy computer vision models (which takes hours), Sentinel uses a lightweight meta-classifier approach:
 
----
-
-## Customisation
-
-Replace `simulate_detection()` with calls to your real ML backend
-(YOLO, OpenCV DNN, etc.) — the rest of the pipeline stays unchanged.
-
-```python
-# Example: drop-in real backend
-def simulate_detection(frame, prev_gray):
-    results = your_model.predict(frame)
-    return {
-        "num_people":      results.person_count,
-        "weapon_detected": results.weapon_found,
-        "motion_score":    compute_motion(frame, prev_gray),
-        "detections":      results.boxes,
-        "gray":            cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
-    }
-```
+1. **Signal Extraction**: During a threat, 10 key signals (YOLO confidence, arm speed, motion score, time of day, etc.) are extracted.
+2. **Labeling**: An operator reviews the alert snapshot and labels it.
+3. **Training**: A `GradientBoostingClassifier` trains on this tabular data in milliseconds.
+4. **Inference**: On future frames, if the rule-engine flags a threat, the meta-classifier evaluates the signals. If it determines the threat confidence is < 40%, the alert is silently suppressed.
