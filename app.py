@@ -11,8 +11,10 @@ from collections import deque
 from detector import ThreatDetector
 from pose import PoseEstimator
 from motion import MotionDetector
-from logic import FightDetector, compute_threat_level
+from logic import FightDetector, compute_threat_level, classify_detection_type
 from alert import AlertSystem
+from feedback import FeedbackStore, ThreatMetaClassifier, ParameterOptimizer
+from review_ui import render_review_panel, render_ml_status_sidebar, render_calibration_result
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -164,6 +166,8 @@ st.markdown("""
 defaults = {
     "running": False, "alert_history": deque(maxlen=50),
     "frame_count": 0, "total_alerts": 0, "source_type": "Webcam",
+    "review_mode": False, "auto_suppress": True,
+    "fight_threshold": None,  # None = use default
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -189,6 +193,14 @@ def load_fight():
 @st.cache_resource
 def load_alert():
     return AlertSystem()
+
+@st.cache_resource
+def load_feedback_store():
+    return FeedbackStore()
+
+@st.cache_resource
+def load_meta_classifier():
+    return ThreatMetaClassifier()
 
 # ─── Draw overlays ───────────────────────────────────────────────────────────
 def draw_overlays(frame, detections, threat_level):
@@ -250,6 +262,8 @@ with st.sidebar:
 
     st.markdown('<div class="section-title">AI ENGINE</div>', unsafe_allow_html=True)
     yolo_conf = st.slider("YOLO Confidence", 0.10, 0.90, 0.40, 0.05, format="%.2f")
+    motion_sensitivity = st.slider("Motion Sensitivity", 0.0, 1.0, 0.50, 0.05, format="%.2f",
+                                    help="0 = least sensitive, 1 = most sensitive")
     target_fps = st.slider("Target FPS", 1, 30, 12, 1)
 
     st.markdown('<div class="section-title">CONTROLS</div>', unsafe_allow_html=True)
@@ -266,6 +280,57 @@ with st.sidebar:
         st.session_state.alert_history.clear()
         st.session_state.total_alerts = 0
         st.rerun()
+
+    st.markdown('<div class="section-title">ML FEEDBACK</div>', unsafe_allow_html=True)
+
+    feedback_store = load_feedback_store()
+    meta_clf = load_meta_classifier()
+
+    if st.button("📋  REVIEW ALERTS"):
+        st.session_state.review_mode = not st.session_state.review_mode
+        st.rerun()
+
+    st.session_state.auto_suppress = st.checkbox(
+        "🤖 Auto-suppress false alarms",
+        value=st.session_state.get("auto_suppress", True),
+        help="When ML model is active, automatically suppress likely false alarms",
+    )
+
+    if st.button("🎯  AUTO-CALIBRATE"):
+        optimizer = ParameterOptimizer(feedback_store)
+        result = optimizer.optimize()
+        if result:
+            st.session_state["calibrated"] = result
+            st.rerun()
+        else:
+            st.warning("⚠ Need 15+ labelled alerts")
+
+    if st.button("🧠  TRAIN MODEL"):
+        if feedback_store.count_labelled() >= meta_clf.MIN_SAMPLES:
+            metrics = meta_clf.train(feedback_store)
+            if metrics:
+                st.success(f"F1={metrics['f1']}")
+        else:
+            st.warning(f"⚠ Need {meta_clf.MIN_SAMPLES}+ labelled alerts")
+
+    render_ml_status_sidebar(meta_clf, feedback_store)
+
+    # Show calibration result if available
+    if "calibrated" in st.session_state:
+        render_calibration_result(st.session_state["calibrated"])
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("✅ APPLY"):
+                r = st.session_state["calibrated"]
+                st.session_state["applied_yolo"] = r["yolo_conf"]
+                st.session_state["applied_motion"] = r["motion_sensitivity"]
+                st.session_state["fight_threshold"] = r["fight_threshold"]
+                del st.session_state["calibrated"]
+                st.rerun()
+        with col_b:
+            if st.button("✗ DISMISS"):
+                del st.session_state["calibrated"]
+                st.rerun()
 
     st.markdown("---")
     st.markdown("""
@@ -295,34 +360,41 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─── Main Layout ─────────────────────────────────────────────────────────────
-col_video, col_panel = st.columns([3, 2], gap="large")
+if st.session_state.get("review_mode", False):
+    # ── REVIEW MODE ──
+    feedback_store = load_feedback_store()
+    meta_clf = load_meta_classifier()
+    render_review_panel(feedback_store, meta_clf)
+else:
+    # ── NORMAL MODE ──
+    col_video, col_panel = st.columns([3, 2], gap="large")
 
-with col_video:
-    st.markdown('<div class="section-title">CAMERA FEED</div>', unsafe_allow_html=True)
-    video_placeholder = st.empty()
-    if not st.session_state.running:
-        standby = np.zeros((360, 640, 3), dtype=np.uint8)
-        cv2.putText(standby, "SYSTEM STANDBY", (140,170), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (13,32,48), 2)
-        cv2.putText(standby, "Press START MONITORING to begin", (100,210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30,80,100), 1)
-        for i in range(0, 640, 40):
-            cv2.line(standby, (i,0), (i,360), (8,20,32), 1)
-        for i in range(0, 360, 40):
-            cv2.line(standby, (0,i), (640,i), (8,20,32), 1)
-        video_placeholder.image(standby, channels="BGR", use_column_width=True)
+    with col_video:
+        st.markdown('<div class="section-title">CAMERA FEED</div>', unsafe_allow_html=True)
+        video_placeholder = st.empty()
+        if not st.session_state.running:
+            standby = np.zeros((360, 640, 3), dtype=np.uint8)
+            cv2.putText(standby, "SYSTEM STANDBY", (140,170), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (13,32,48), 2)
+            cv2.putText(standby, "Press START MONITORING to begin", (100,210), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (30,80,100), 1)
+            for i in range(0, 640, 40):
+                cv2.line(standby, (i,0), (i,360), (8,20,32), 1)
+            for i in range(0, 360, 40):
+                cv2.line(standby, (0,i), (640,i), (8,20,32), 1)
+            video_placeholder.image(standby, channels="BGR", use_column_width=True)
 
-    st.markdown('<div class="section-title">FRAME DATA · JSON</div>', unsafe_allow_html=True)
-    json_placeholder = st.empty()
+        st.markdown('<div class="section-title">FRAME DATA · JSON</div>', unsafe_allow_html=True)
+        json_placeholder = st.empty()
 
-with col_panel:
-    st.markdown('<div class="section-title">THREAT STATUS</div>', unsafe_allow_html=True)
-    threat_placeholder = st.empty()
-    stats_placeholder = st.empty()
-    st.markdown('<div class="section-title">FIGHT ANALYSIS</div>', unsafe_allow_html=True)
-    fight_placeholder = st.empty()
-    st.markdown('<div class="section-title">ACTIVE ALERTS</div>', unsafe_allow_html=True)
-    active_placeholder = st.empty()
-    st.markdown('<div class="section-title">ALERT HISTORY</div>', unsafe_allow_html=True)
-    history_placeholder = st.empty()
+    with col_panel:
+        st.markdown('<div class="section-title">THREAT STATUS</div>', unsafe_allow_html=True)
+        threat_placeholder = st.empty()
+        stats_placeholder = st.empty()
+        st.markdown('<div class="section-title">FIGHT ANALYSIS</div>', unsafe_allow_html=True)
+        fight_placeholder = st.empty()
+        st.markdown('<div class="section-title">ACTIVE ALERTS</div>', unsafe_allow_html=True)
+        active_placeholder = st.empty()
+        st.markdown('<div class="section-title">ALERT HISTORY</div>', unsafe_allow_html=True)
+        history_placeholder = st.empty()
 
 # ─── Render Panel ────────────────────────────────────────────────────────────
 def render_panel(threat_level="SAFE", frame_data=None, fight_data=None, reason="", active_msgs=None):
@@ -361,13 +433,17 @@ def render_panel(threat_level="SAFE", frame_data=None, fight_data=None, reason="
     # Fight analysis signals
     if fight_data:
         arm_s = fight_data.get("arm_speed", 0)
+        leg_s = fight_data.get("leg_speed", 0)
         prox = fight_data.get("proximity", 0)
         fscore = fight_data.get("fight_score", 0)
         fdet = fight_data.get("fight_detected", False)
+        pclose = fight_data.get("people_close", False)
         fc = "#ff2255" if fdet else "#00ffa3"
         arm_bar = int(arm_s * 100)
+        leg_bar = int(leg_s * 100)
         prox_bar = int(prox * 100)
         fs_bar = int(fscore * 100)
+        pc_color = "#ff8c00" if pclose else "#3a6080"
         fight_placeholder.markdown(f"""
         <div class="signal-bar">
           <div class="signal-label">ARM SPEED</div>
@@ -375,9 +451,18 @@ def render_panel(threat_level="SAFE", frame_data=None, fight_data=None, reason="
           <div class="motion-bar-bg"><div class="motion-bar-fill" style="width:{arm_bar}%;background:#4a9eff;"></div></div>
         </div>
         <div class="signal-bar">
+          <div class="signal-label">LEG SPEED</div>
+          <div class="signal-val">{leg_s:.3f}</div>
+          <div class="motion-bar-bg"><div class="motion-bar-fill" style="width:{leg_bar}%;background:#aa66ff;"></div></div>
+        </div>
+        <div class="signal-bar">
           <div class="signal-label">PROXIMITY</div>
           <div class="signal-val">{prox:.3f}</div>
           <div class="motion-bar-bg"><div class="motion-bar-fill" style="width:{prox_bar}%;background:#ff8c00;"></div></div>
+        </div>
+        <div class="signal-bar">
+          <div class="signal-label">PEOPLE CLOSE</div>
+          <div class="signal-val" style="color:{pc_color};font-size:16px;">{'YES' if pclose else 'NO'}</div>
         </div>
         <div class="signal-bar">
           <div class="signal-label">FIGHT SCORE</div>
@@ -422,15 +507,23 @@ def render_panel(threat_level="SAFE", frame_data=None, fight_data=None, reason="
             '<div style="color:#1e3a50;font-size:12px;font-family:Share Tech Mono,monospace;'
             'letter-spacing:2px;padding:10px 0;">NO ALERTS RECORDED</div>', unsafe_allow_html=True)
 
-render_panel()
+if not st.session_state.get("review_mode", False):
+    render_panel()
 
 # ─── Main Video Loop ─────────────────────────────────────────────────────────
-if st.session_state.running:
+if st.session_state.running and not st.session_state.get("review_mode", False):
     detector = load_detector(yolo_conf)
     pose_est = load_pose()
     motion_det = load_motion()
     fight_det = load_fight()
     alert_sys = load_alert()
+    feedback_store = load_feedback_store()
+    meta_clf = load_meta_classifier()
+
+    # Use calibrated thresholds if applied
+    effective_yolo = st.session_state.get("applied_yolo", yolo_conf)
+    effective_motion = st.session_state.get("applied_motion", motion_sensitivity)
+    effective_fight_thresh = st.session_state.get("fight_threshold", None)
 
     cap = None
     tmp_path = None
@@ -479,14 +572,43 @@ if st.session_state.running:
 
             pose_result = pose_est.process(frame)
             landmarks = pose_result["landmarks"]
-            frame = pose_result["frame"]  # now has skeleton overlay
+            frame = pose_result["frame"]
 
+            motion_det.set_sensitivity(effective_motion)
             motion_score = motion_det.compute(frame)
 
-            fight_result = fight_det.detect_fight(landmarks, detections, motion_score)
+            fight_result = fight_det.detect_fight(
+                landmarks, detections, motion_score,
+                threshold_override=effective_fight_thresh,
+            )
             fight_detected = fight_result["fight_detected"]
 
-            threat_level, reason = compute_threat_level(weapon_detected, fight_detected)
+            threat_level, reason = compute_threat_level(weapon_detected, fight_detected, people_count)
+            det_type = classify_detection_type(weapon_detected, fight_detected)
+
+            # ── Build ML signal vector ──
+            max_det_conf = max((d["confidence"] for d in detections), default=0.0)
+            signals = {
+                "yolo_confidence": round(max_det_conf, 3),
+                "people_count": people_count,
+                "weapon_detected": int(weapon_detected),
+                "motion_score": round(motion_score, 3),
+                "arm_speed": fight_result.get("arm_speed", 0.0),
+                "leg_speed": fight_result.get("leg_speed", 0.0),
+                "proximity": fight_result.get("proximity", 0.0),
+                "fight_score": fight_result.get("fight_score", 0.0),
+                "threat_level_enc": {"SAFE": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}.get(threat_level, 0),
+                "hour_of_day": datetime.now().hour,
+            }
+
+            # ── ML Meta-Classifier: suppress likely false alarms ──
+            ml_prediction = None
+            if threat_level != "SAFE" and meta_clf.is_active() and st.session_state.get("auto_suppress", True):
+                prediction = meta_clf.predict(signals)
+                ml_prediction = prediction["confidence"]
+                if not prediction["is_threat"]:
+                    threat_level = "SAFE"
+                    reason = ""
 
             # ── Frame data dict ──
             frame_data = {
@@ -497,8 +619,11 @@ if st.session_state.running:
                 "threat": threat_level,
             }
 
-            # ── Alert ──
-            alert_record = alert_sys.trigger(frame, threat_level, reason)
+            # ── Alert + Feedback logging ──
+            alert_record = alert_sys.trigger(
+                frame, threat_level, reason,
+                detection_type=det_type, signals=signals,
+            )
             if alert_record:
                 st.session_state.alert_history.append({
                     "time": alert_record["timestamp"],
@@ -506,6 +631,21 @@ if st.session_state.running:
                     "msg": alert_record["reason"],
                 })
                 st.session_state.total_alerts += 1
+                # Log to feedback DB for ML training
+                feedback_store.record_alert(
+                    alert_id=alert_record["alert_id"],
+                    timestamp=alert_record["timestamp_iso"],
+                    threat_level=alert_record["level"],
+                    reason=alert_record["reason"],
+                    snapshot_path=alert_record["snapshot"],
+                    det_type=alert_record["detection_type"],
+                    signals=alert_record["signals"],
+                    ml_prediction=ml_prediction,
+                )
+
+                # Auto-retrain if enough new feedback
+                if meta_clf.should_retrain(feedback_store):
+                    meta_clf.train(feedback_store)
 
             # ── Draw & display ──
             rgb_frame = draw_overlays(frame, detections, threat_level)
@@ -542,3 +682,4 @@ if st.session_state.running:
         if tmp_path:
             try: os.unlink(tmp_path)
             except: pass
+

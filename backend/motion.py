@@ -26,6 +26,21 @@ class MotionDetector:
         self.normalise_factor = normalise_factor
         self._prev_gray: np.ndarray | None = None
 
+    def set_sensitivity(self, sensitivity: float):
+        """
+        Adjust motion detection sensitivity.
+
+        Parameters
+        ----------
+        sensitivity : float
+            Value in [0.0, 1.0].
+            0.0 = least sensitive (normalise_factor=60, needs large motion)
+            1.0 = most sensitive  (normalise_factor=5, reacts to tiny motion)
+        """
+        # Map sensitivity 0→1 to normalise_factor 60→5
+        sensitivity = max(0.0, min(1.0, sensitivity))
+        self.normalise_factor = 60.0 - (55.0 * sensitivity)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

@@ -1,8 +1,9 @@
 """
-alert.py - Alert system with snapshots and console messages.
+alert.py - Alert system with snapshots, console messages, and feedback integration.
 """
 
 import os
+import uuid
 import cv2
 import numpy as np
 from datetime import datetime
@@ -19,7 +20,7 @@ _COLOURS = {
 
 
 class AlertSystem:
-    """Generates alerts with snapshots and console messages."""
+    """Generates alerts with snapshots, console messages, and unique IDs for feedback tracking."""
 
     def __init__(self, alert_dir: str = ALERT_DIR, cooldown: float = ALERT_COOLDOWN_SECONDS):
         self.alert_dir = alert_dir
@@ -29,8 +30,35 @@ class AlertSystem:
         os.makedirs(self.alert_dir, exist_ok=True)
         print(f"[INFO] Alert snapshots dir: {os.path.abspath(self.alert_dir)}")
 
-    def trigger(self, frame: np.ndarray, threat_level: str, reason: str) -> dict | None:
-        """Trigger alert if threat != SAFE and cooldown elapsed."""
+    def trigger(
+        self,
+        frame: np.ndarray,
+        threat_level: str,
+        reason: str,
+        detection_type: str = "unknown",
+        signals: dict | None = None,
+    ) -> dict | None:
+        """
+        Trigger alert if threat != SAFE and cooldown elapsed.
+
+        Parameters
+        ----------
+        frame : np.ndarray
+            Current video frame for snapshot.
+        threat_level : str
+            SAFE, MEDIUM, HIGH, or CRITICAL.
+        reason : str
+            Human-readable reason for the alert.
+        detection_type : str
+            Category: 'weapon', 'fight', 'combined'.
+        signals : dict | None
+            Raw detection signals for ML feedback (YOLO conf, fight score, etc.).
+
+        Returns
+        -------
+        dict | None
+            Alert record with unique ID, or None if suppressed/safe.
+        """
         if threat_level == "SAFE":
             return None
 
@@ -40,7 +68,11 @@ class AlertSystem:
 
         self._last_alert_time = now.timestamp()
         ts_str = now.strftime("%H:%M:%S")
+        ts_iso = now.isoformat()
         ts_file = now.strftime("%Y%m%d_%H%M%S_%f")
+
+        # Generate unique alert ID
+        alert_id = str(uuid.uuid4())[:12]
 
         snapshot_path = os.path.join(self.alert_dir, f"{ts_file}.jpg")
         try:
@@ -53,7 +85,16 @@ class AlertSystem:
         reset = _COLOURS["RESET"]
         print(f"{colour}[{ts_str}] {threat_level}: {reason}{reset}")
 
-        record = {"timestamp": ts_str, "level": threat_level, "reason": reason, "snapshot": snapshot_path}
+        record = {
+            "alert_id": alert_id,
+            "timestamp": ts_str,
+            "timestamp_iso": ts_iso,
+            "level": threat_level,
+            "reason": reason,
+            "snapshot": snapshot_path,
+            "detection_type": detection_type,
+            "signals": signals or {},
+        }
         self.alert_log.append(record)
         return record
 
