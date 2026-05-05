@@ -137,6 +137,7 @@ class PoseEstimator:
                     first_landmarks = person_landmarks
 
                 # Draw skeleton with per-person colour
+                # [OPTIMIZATION] Thinner lines for faster rendering
                 skel_color = SKELETON_COLOURS[person_idx % len(SKELETON_COLOURS)]
                 for c1, c2 in POSE_CONNECTIONS:
                     if c1 < len(pts) and c2 < len(pts):
@@ -144,12 +145,12 @@ class PoseEstimator:
                         v1 = pose_lms[c1].visibility
                         v2 = pose_lms[c2].visibility
                         if v1 > 0.3 and v2 > 0.3:
-                            cv2.line(out_frame, pts[c1], pts[c2], skel_color, 2, cv2.LINE_AA)
+                            cv2.line(out_frame, pts[c1], pts[c2], skel_color, 1, cv2.LINE_AA)
 
-                # Draw joints
+                # Draw joints — smaller circles
                 for idx, (px, py) in enumerate(pts):
                     if pose_lms[idx].visibility > 0.3:
-                        cv2.circle(out_frame, (px, py), 4, JOINT_COLOUR, -1)
+                        cv2.circle(out_frame, (px, py), 3, JOINT_COLOUR, -1)
 
         return {
             "landmarks": first_landmarks,

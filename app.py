@@ -5,6 +5,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import time
+import pandas as pd
 from datetime import datetime
 from collections import deque
 
@@ -173,6 +174,13 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Rolling buffer for real-time graphs (~10 seconds at ~10 fps = 100 samples)
+if "graph_data" not in st.session_state:
+    st.session_state.graph_data = deque(maxlen=100)
+
+# Threat label → numeric mapping for graphing
+THREAT_NUMERIC = {"SAFE": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
 # ─── Cache backend modules ──────────────────────────────────────────────────
 @st.cache_resource
 def load_detector(conf):
@@ -202,7 +210,7 @@ def load_feedback_store():
 def load_meta_classifier():
     return ThreatMetaClassifier()
 
-# ─── Draw overlays ───────────────────────────────────────────────────────────
+# ─── Draw overlays [OPTIMIZATION] Reduced line thickness & font sizes ────────
 def draw_overlays(frame, detections, threat_level):
     out = frame.copy()
     h, w = out.shape[:2]
@@ -215,27 +223,27 @@ def draw_overlays(frame, detections, threat_level):
     for obj in detections:
         x1, y1, x2, y2 = obj["box"]
         c = obj["color"]
-        cv2.rectangle(out, (x1,y1), (x2,y2), c, 2)
-        cs = 12
+        cv2.rectangle(out, (x1,y1), (x2,y2), c, 1)
+        cs = 10
         for cx,cy,dx,dy in [(x1,y1,1,1),(x2,y1,-1,1),(x1,y2,1,-1),(x2,y2,-1,-1)]:
-            cv2.line(out, (cx,cy), (cx+dx*cs,cy), c, 3)
-            cv2.line(out, (cx,cy), (cx,cy+dy*cs), c, 3)
+            cv2.line(out, (cx,cy), (cx+dx*cs,cy), c, 2)
+            cv2.line(out, (cx,cy), (cx,cy+dy*cs), c, 2)
         label = f"{obj['label']}  {obj['confidence']:.0%}"
-        (tw,th),_ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(out, (x1,y1-th-10), (x1+tw+10,y1), c, -1)
-        cv2.putText(out, label, (x1+5,y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (5,10,15), 1, cv2.LINE_AA)
+        (tw,th),_ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        cv2.rectangle(out, (x1,y1-th-8), (x1+tw+8,y1), c, -1)
+        cv2.putText(out, label, (x1+4,y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (5,10,15), 1, cv2.LINE_AA)
 
     tl_text = threat_level
-    (ttw,tth),_ = cv2.getTextSize(tl_text, cv2.FONT_HERSHEY_SIMPLEX, 0.75, 2)
-    tx = w - ttw - 18
-    cv2.rectangle(out, (tx-8,8), (w-8,tth+18), tc, -1)
-    cv2.putText(out, tl_text, (tx,tth+12), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (5,10,15), 2, cv2.LINE_AA)
+    (ttw,tth),_ = cv2.getTextSize(tl_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+    tx = w - ttw - 14
+    cv2.rectangle(out, (tx-6,6), (w-6,tth+16), tc, -1)
+    cv2.putText(out, tl_text, (tx,tth+10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (5,10,15), 1, cv2.LINE_AA)
 
     ts = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-    cv2.putText(out, ts, (10,h-12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (60,100,130), 1, cv2.LINE_AA)
+    cv2.putText(out, ts, (8,h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (60,100,130), 1, cv2.LINE_AA)
 
     if threat_level == "CRITICAL":
-        cv2.rectangle(out, (0,0), (w-1,h-1), (255,34,85), 5)
+        cv2.rectangle(out, (0,0), (w-1,h-1), (255,34,85), 3)
 
     return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
 
@@ -254,17 +262,25 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">VIDEO SOURCE</div>', unsafe_allow_html=True)
-    source = st.radio("", ["Webcam", "Video File"], label_visibility="collapsed", key="source_radio")
+    source = st.radio("", ["Webcam", "Video File", "WiFi Camera"], label_visibility="collapsed", key="source_radio")
     uploaded_file = None
+    wifi_url = None
     if source == "Video File":
         uploaded_file = st.file_uploader("Upload video", type=["mp4","avi","mov","mkv"],
                                          label_visibility="collapsed")
+    elif source == "WiFi Camera":
+        wifi_url = st.text_input(
+            "IP Camera URL",
+            value="http://192.168.1.5:8080/video",
+            placeholder="http://192.168.1.5:8080/video",
+            help="Enter the stream URL from your phone (e.g. IP Webcam app)",
+        )
 
     st.markdown('<div class="section-title">AI ENGINE</div>', unsafe_allow_html=True)
     yolo_conf = st.slider("YOLO Confidence", 0.10, 0.90, 0.40, 0.05, format="%.2f")
     motion_sensitivity = st.slider("Motion Sensitivity", 0.0, 1.0, 0.50, 0.05, format="%.2f",
                                     help="0 = least sensitive, 1 = most sensitive")
-    target_fps = st.slider("Target FPS", 1, 30, 12, 1)
+    target_fps = st.slider("Target FPS", 1, 60, 24, 1)
 
     st.markdown('<div class="section-title">CONTROLS</div>', unsafe_allow_html=True)
     if not st.session_state.running:
@@ -386,10 +402,24 @@ else:
                 cv2.line(standby, (i,0), (i,360), (8,20,32), 1)
             for i in range(0, 360, 40):
                 cv2.line(standby, (0,i), (640,i), (8,20,32), 1)
-            video_placeholder.image(standby, channels="BGR", use_column_width=True)
+            video_placeholder.image(standby, channels="BGR", use_container_width=True)
 
         st.markdown('<div class="section-title">FRAME DATA · JSON</div>', unsafe_allow_html=True)
         json_placeholder = st.empty()
+
+        # ── Real-time graphs ──
+        st.markdown('<div class="section-title">THREAT ACTIVITY (LAST 10 SECONDS)</div>', unsafe_allow_html=True)
+        graph_threat_placeholder = st.empty()
+        st.caption("0: SAFE  ·  1: MEDIUM  ·  2: HIGH  ·  3: CRITICAL")
+        st.markdown('<div class="section-title">SIGNAL ACTIVITY</div>', unsafe_allow_html=True)
+        graph_signal_placeholder = st.empty()
+
+        # Render persisted graph data (visible before/after monitoring)
+        if len(st.session_state.graph_data) > 1:
+            _gdf = pd.DataFrame(list(st.session_state.graph_data))
+            _gdf.set_index("time", inplace=True)
+            graph_threat_placeholder.line_chart(_gdf[["threat"]], height=150, use_container_width=True)
+            graph_signal_placeholder.line_chart(_gdf[["motion_score", "fight_score"]], height=150, use_container_width=True)
 
     with col_panel:
         st.markdown('<div class="section-title">THREAT STATUS</div>', unsafe_allow_html=True)
@@ -537,6 +567,26 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
     try:
         if source == "Webcam":
             cap = cv2.VideoCapture(0)
+            # Optimise webcam capture for higher FPS
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        elif source == "WiFi Camera":
+            # WiFi / IP camera stream
+            if not wifi_url or not wifi_url.strip():
+                st.warning("⚠ Please enter a valid IP camera URL.")
+                st.session_state.running = False
+                st.stop()
+            cap = cv2.VideoCapture(wifi_url.strip(), cv2.CAP_FFMPEG)
+            # [OPTIMIZATION] Minimise buffer for live IP stream
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            if not cap.isOpened():
+                st.warning("⚠ Cannot connect to WiFi camera. Falling back to webcam...")
+                cap = cv2.VideoCapture(0)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             if uploaded_file is not None:
                 import tempfile
@@ -558,8 +608,19 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
 
         frame_delay = 1.0 / target_fps
 
+        # [OPTIMIZATION] Frame counter & cached results for frame-skipping
+        _frame_idx = 0
+        _prev_det = None     # cached YOLO detection result
+        _prev_pose = None    # cached MediaPipe pose result
+
         while st.session_state.running:
             t0 = time.time()
+            _frame_idx += 1
+
+            # [OPTIMIZATION] For live sources, grab an extra frame to drop stale buffer
+            if source in ("Webcam", "WiFi Camera"):
+                cap.grab()
+
             ret, frame = cap.read()
 
             if not ret:
@@ -568,20 +629,36 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                     continue
                 break
 
-            frame = cv2.resize(frame, (640, 360))
+            # [OPTIMIZATION] Resize EARLY to smaller processing resolution
+            frame = cv2.resize(frame, (480, 360))
 
-            # ── Real AI Pipeline ──
-            det_result = detector.detect(frame)
+            # ── Real AI Pipeline (with frame-skip optimisation) ──
+
+            # [OPTIMIZATION] Run YOLO every 3rd frame, reuse cached result otherwise
+            if _frame_idx % 1== 0 or _prev_det is None:
+                det_result = detector.detect(frame)
+                _prev_det = det_result
+            else:
+                det_result = _prev_det
+
             detections = det_result["detections"]
             people_count = det_result["people_count"]
             weapon_detected = det_result["weapon_detected"]
 
-            pose_result = pose_est.process(frame)
-            landmarks = pose_result["landmarks"]
-            frame = pose_result["frame"]
+            # MediaPipe pose estimation — commented out for performance
+            if _frame_idx % 1 == 0 or _prev_pose is None:
+                pose_result = pose_est.process(frame)
+                _prev_pose = pose_result
+                landmarks = pose_result["landmarks"]
+                frame = pose_result["frame"]
+            else:
+                landmarks = _prev_pose["landmarks"]
+                frame = _prev_pose["frame"]
 
+            # [OPTIMIZATION] Downscale to 320×240 for motion detection only
             motion_det.set_sensitivity(effective_motion)
-            motion_score = motion_det.compute(frame)
+            small_motion = cv2.resize(frame, (320, 240))
+            motion_score = motion_det.compute(small_motion)
 
             fight_result = fight_det.detect_fight(
                 landmarks, detections, motion_score,
@@ -657,9 +734,9 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                 if meta_clf.should_retrain(feedback_store):
                     meta_clf.train(feedback_store)
 
-            # ── Draw & display ──
+            # [OPTIMIZATION] Always draw & display the latest frame for smooth video
             rgb_frame = draw_overlays(frame, detections, threat_level)
-            video_placeholder.image(rgb_frame, use_column_width=True)
+            video_placeholder.image(rgb_frame, use_container_width=True)
 
             # ── JSON display ──
             json_str = (
@@ -681,6 +758,26 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
             st.session_state.frame_count += 1
             render_panel(threat_level, frame_data, fight_result, reason,
                          active_msgs if threat_level != "SAFE" else None)
+
+            # ── Real-time graph data ──
+            # Append data point every frame
+            st.session_state.graph_data.append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "threat": THREAT_NUMERIC.get(threat_level, 0),
+                "motion_score": round(motion_score, 3),
+                "fight_score": round(fight_result.get("fight_score", 0.0), 3),
+            })
+
+            # Update graphs every 5 frames to avoid lag
+            if st.session_state.frame_count % 5 == 0 and len(st.session_state.graph_data) > 1:
+                df = pd.DataFrame(list(st.session_state.graph_data))
+                df.set_index("time", inplace=True)
+
+                # Primary graph: threat level over time
+                graph_threat_placeholder.line_chart(df[["threat"]], height=150, use_container_width=True)
+
+                # Secondary graph: motion_score and fight_score
+                graph_signal_placeholder.line_chart(df[["motion_score", "fight_score"]], height=150, use_container_width=True)
 
             elapsed = time.time() - t0
             if elapsed < frame_delay:

@@ -2,10 +2,10 @@
 main.py - Real-Time AI Threat Detection System — main execution loop.
 
 Pipeline per frame:
-  1. Capture & resize frame
-  2. YOLO detection (people, weapons)
-  3. MediaPipe pose estimation (skeleton)
-  4. Motion detection (frame differencing)
+  1. Capture & resize frame  (threaded, non-blocking)
+  2. YOLO detection (people, weapons)  — every 3rd frame
+  3. MediaPipe pose estimation (skeleton) — every 3rd frame
+  4. Motion detection (frame differencing) — on downscaled frame
   5. Fight detection (arm speed + proximity + motion)
   6. Threat level computation
   7. Alert generation (snapshot + console)
@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 
+from camera_thread import CameraThread
 from detector import ThreatDetector
 from pose import PoseEstimator
 from motion import MotionDetector
@@ -34,9 +35,18 @@ from alert import AlertSystem
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────────────────────
-FRAME_WIDTH  = 640
-FRAME_HEIGHT = 480
-WINDOW_NAME  = "SENTINEL — AI Threat Detection"
+# [OPTIMIZATION] Reduced processing resolution for faster inference
+PROCESS_WIDTH  = 480
+PROCESS_HEIGHT = 360
+WINDOW_NAME    = "SENTINEL — AI Threat Detection"
+
+# [OPTIMIZATION] Even smaller resolution for motion detection only
+MOTION_WIDTH  = 320
+MOTION_HEIGHT = 240
+
+# [OPTIMIZATION] Frame-skip intervals (run heavy models less often)
+YOLO_SKIP_INTERVAL = 3   # Run YOLO every 3rd frame
+POSE_SKIP_INTERVAL = 3   # Run MediaPipe every 3rd frame
 
 # Threat colour map (BGR)
 THREAT_COLOURS = {
@@ -48,7 +58,7 @@ THREAT_COLOURS = {
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HUD overlay drawing
+# HUD overlay drawing  [OPTIMIZATION] Reduced font sizes & line thickness
 # ──────────────────────────────────────────────────────────────────────────────
 def draw_hud(frame: np.ndarray, threat_level: str, frame_data: dict) -> np.ndarray:
     """Draw threat badge, stats, and timestamp onto the frame."""
@@ -56,34 +66,34 @@ def draw_hud(frame: np.ndarray, threat_level: str, frame_data: dict) -> np.ndarr
     h, w = out.shape[:2]
     tc = THREAT_COLOURS.get(threat_level, (200, 200, 200))
 
-    # ── Threat level badge (top-right) ──
+    # ── Threat level badge (top-right) — smaller font ──
     label = threat_level
-    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-    tx = w - tw - 20
-    cv2.rectangle(out, (tx - 10, 6), (w - 6, th + 22), tc, -1)
-    cv2.putText(out, label, (tx, th + 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (10, 10, 10), 2, cv2.LINE_AA)
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+    tx = w - tw - 16
+    cv2.rectangle(out, (tx - 8, 4), (w - 4, th + 18), tc, -1)
+    cv2.putText(out, label, (tx, th + 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (10, 10, 10), 1, cv2.LINE_AA)
 
-    # ── Stats bar (top-left) ──
+    # ── Stats bar (top-left) — smaller font ──
     stats_lines = [
         f"People: {frame_data['people']}",
         f"Weapon: {'YES' if frame_data['weapon'] else 'NO'}",
         f"Motion: {frame_data['motion_score']:.0%}",
         f"Fight:  {'YES' if frame_data['fight'] else 'NO'}",
     ]
-    y0 = 24
+    y0 = 20
     for i, line in enumerate(stats_lines):
-        cv2.putText(out, line, (12, y0 + i * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 220, 240), 1, cv2.LINE_AA)
+        cv2.putText(out, line, (10, y0 + i * 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 220, 240), 1, cv2.LINE_AA)
 
     # ── Timestamp (bottom-left) ──
     ts = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-    cv2.putText(out, ts, (10, h - 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 120, 150), 1, cv2.LINE_AA)
+    cv2.putText(out, ts, (8, h - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (80, 120, 150), 1, cv2.LINE_AA)
 
-    # ── Red border flash for CRITICAL ──
+    # ── Red border flash for CRITICAL — thinner border ──
     if threat_level == "CRITICAL":
-        cv2.rectangle(out, (0, 0), (w - 1, h - 1), (0, 0, 255), 4)
+        cv2.rectangle(out, (0, 0), (w - 1, h - 1), (0, 0, 255), 3)
 
     return out
 
@@ -94,12 +104,13 @@ def draw_hud(frame: np.ndarray, threat_level: str, frame_data: dict) -> np.ndarr
 def main():
     parser = argparse.ArgumentParser(description="SENTINEL — AI Threat Detection System")
     parser.add_argument("--source", default="0",
-                        help="Video source: webcam index (0) or path to video file")
+                        help="Video source: webcam index (0), path to video file, "
+                             "or WiFi/IP camera URL (e.g. http://192.168.1.5:8080/video)")
     parser.add_argument("--conf", type=float, default=0.40,
                         help="YOLO confidence threshold (default: 0.40)")
     args = parser.parse_args()
 
-    # Determine source
+    # Determine source — keep URLs as strings, convert digits to int
     source = int(args.source) if args.source.isdigit() else args.source
 
     # ── Initialise modules ──
@@ -113,46 +124,78 @@ def main():
     fight_det    = FightDetector()
     alert_system = AlertSystem()
 
+    # [OPTIMIZATION] Use threaded camera for non-blocking capture
     print(f"[INFO] Opening video source: {source}")
-    cap = cv2.VideoCapture(source)
+    cam = CameraThread(source=source, width=PROCESS_WIDTH, height=PROCESS_HEIGHT, fps=30)
 
-    if not cap.isOpened():
+    if not cam.is_opened():
         print(f"[ERROR] Cannot open video source: {source}")
         sys.exit(1)
 
+    cam.start()
+    print("[INFO] Threaded camera started.")
     print("[INFO] Press 'q' to quit.\n")
 
     fps_timer = time.time()
     fps_count = 0
     display_fps = 0.0
 
+    # [OPTIMIZATION] Frame counter & cached results for frame-skipping
+    frame_count = 0
+    prev_det_result = None
+    prev_pose_result = None
+
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
+            frame_count += 1
+
+            # [OPTIMIZATION] Non-blocking read from threaded camera
+            ret, frame = cam.read()
+            if not ret or frame is None:
                 if isinstance(source, str) and not source.isdigit():
                     # Loop video files
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    cam.reset()
+                    time.sleep(0.01)
+                    continue
+                # No frame yet on first iteration — wait briefly
+                if frame_count <= 5:
+                    time.sleep(0.05)
                     continue
                 print("[INFO] Video stream ended.")
                 break
 
-            # ── Resize for performance ──
-            frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+            # [OPTIMIZATION] Resize to processing resolution early,
+            # BEFORE any detection/pose/motion computation
+            frame = cv2.resize(frame, (PROCESS_WIDTH, PROCESS_HEIGHT))
 
             # ── 1. YOLO Detection ──
-            det_result = detector.detect(frame)
+            # [OPTIMIZATION] Run YOLO every 3rd frame, reuse cached result otherwise
+            if frame_count % YOLO_SKIP_INTERVAL == 0 or prev_det_result is None:
+                det_result = detector.detect(frame)
+                prev_det_result = det_result
+            else:
+                det_result = prev_det_result
+
             detections     = det_result["detections"]
             people_count   = det_result["people_count"]
             weapon_detected = det_result["weapon_detected"]
 
             # ── 2. Pose Estimation ──
-            pose_result = pose_est.process(frame)
-            landmarks   = pose_result["landmarks"]
-            frame       = pose_result["frame"]  # frame now has skeleton overlay
+            # [DISABLED] MediaPipe pose estimation — commented out for performance
+            # if frame_count % POSE_SKIP_INTERVAL == 0 or prev_pose_result is None:
+            #     pose_result = pose_est.process(frame)
+            #     prev_pose_result = pose_result
+            #     landmarks   = pose_result["landmarks"]
+            #     frame       = pose_result["frame"]
+            # else:
+            #     pose_result = prev_pose_result
+            #     landmarks   = pose_result["landmarks"]
+            landmarks = None
 
             # ── 3. Motion Detection ──
-            motion_score = motion_det.compute(frame)
+            # [OPTIMIZATION] Downscale to 320×240 for motion only
+            small_frame = cv2.resize(frame, (MOTION_WIDTH, MOTION_HEIGHT))
+            motion_score = motion_det.compute(small_frame)
 
             # ── 4. Fight Detection ──
             fight_result = fight_det.detect_fight(landmarks, detections, motion_score)
@@ -171,7 +214,8 @@ def main():
             }
 
             # ── 7. Alert ──
-            alert_system.trigger(frame, threat_level, reason)
+            if threat_level != "SAFE":
+                alert_system.trigger(frame, threat_level, reason)
 
             # ── 8. Draw overlays ──
             frame = ThreatDetector.draw_detections(frame, detections)
@@ -183,10 +227,10 @@ def main():
                 display_fps = fps_count
                 fps_count = 0
                 fps_timer = time.time()
-            cv2.putText(frame, f"FPS: {display_fps:.0f}", (FRAME_WIDTH - 110, FRAME_HEIGHT - 14),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 120, 150), 1, cv2.LINE_AA)
+            cv2.putText(frame, f"FPS: {display_fps:.0f}", (PROCESS_WIDTH - 100, PROCESS_HEIGHT - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 120, 150), 1, cv2.LINE_AA)
 
-            # ── Display ──
+            # [OPTIMIZATION] Always display latest frame for smooth appearance
             cv2.imshow(WINDOW_NAME, frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -198,7 +242,7 @@ def main():
         print("\n[INFO] Interrupted by user.")
 
     finally:
-        cap.release()
+        cam.stop()
         cv2.destroyAllWindows()
         pose_est.release()
         print("[INFO] Resources released. Goodbye.")

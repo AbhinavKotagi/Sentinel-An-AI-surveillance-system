@@ -161,7 +161,7 @@ def render_review_panel(feedback_store, meta_clf):
         # Snapshot
         snap = alert.get("snapshot")
         if snap and os.path.isfile(snap):
-            st.image(snap, caption=f"Alert {aid}", use_column_width=True)
+            st.image(snap, caption=f"Alert {aid}", use_container_width=True)
 
         # ML prediction
         ml_pred = alert.get("ml_prediction")
