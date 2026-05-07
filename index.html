@@ -1,6 +1,3 @@
-Page: SENTINEL - AI Threat Detection Command Center
-
-```html
 <!DOCTYPE html>
 <html lang="en">
 
@@ -220,7 +217,7 @@ Page: SENTINEL - AI Threat Detection Command Center
             <div class="flex items-center gap-6">
                 <div class="flex items-center gap-3 bg-white/5 px-3 py-1 rounded-md border border-white/5">
                     <iconify-icon icon="lucide:clock" class="text-zinc-500"></iconify-icon>
-                    <span class="font-mono text-xs tracking-tighter">2024.05.24 — 14:02:45 GMT</span>
+                    <span id="systemClock" class="font-mono text-xs tracking-tighter">2024.05.24 — 14:02:45 GMT</span>
                 </div>
                 <div class="flex items-center gap-4">
                     <button class="relative p-2 text-zinc-400 hover:text-[#ef233c] transition-colors">
@@ -350,11 +347,11 @@ Page: SENTINEL - AI Threat Detection Command Center
                 </div>
 
                 <!-- MAIN CAMERA FEED (Single, Prominent) -->
-                <div class="glass-card rounded-xl overflow-hidden alert-active group transition-all">
+                <div id="cameraCard" class="glass-card rounded-xl overflow-hidden alert-active group transition-all">
                     <div class="aspect-video bg-zinc-900 relative">
-                        <img src="https://images.unsplash.com/photo-1541888941255-081b746dfebd?auto=format&fit=crop&q=80&w=1600"
+                        <img id="cameraFeed" src="http://localhost:5000/video_feed"
                             alt="Main Camera Feed"
-                            class="w-full h-full object-cover opacity-70 grayscale group-hover:grayscale-0 transition-all duration-500">
+                            class="w-full h-full object-cover">
                         <div class="scanline-overlay"></div>
                         <div class="absolute inset-0 bg-red-900/10 animate-pulse pointer-events-none"></div>
 
@@ -363,7 +360,7 @@ Page: SENTINEL - AI Threat Detection Command Center
                             <div
                                 class="flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-2 rounded-lg border border-[#ef233c]/30">
                                 <div class="w-2.5 h-2.5 bg-[#ef233c] rounded-full animate-pulse"></div>
-                                <span class="text-xs font-mono font-bold text-[#ef233c] tracking-widest uppercase">Live
+                                <span id="cameraStatus" class="text-xs font-mono font-bold text-[#ef233c] tracking-widest uppercase">Live
                                     • Threat Detected</span>
                             </div>
                         </div>
@@ -382,21 +379,21 @@ Page: SENTINEL - AI Threat Detection Command Center
                                     <div class="flex flex-col">
                                         <span class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">AI
                                             Confidence</span>
-                                        <span class="text-2xl font-bold font-mono text-[#ef233c]">94.2%</span>
+                                        <span id="aiConfidence" class="text-2xl font-bold font-mono text-[#ef233c]">94.2%</span>
                                     </div>
                                     <div class="h-10 w-[1px] bg-white/10"></div>
                                     <div class="flex flex-col">
                                         <span
                                             class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Objects
                                             Detected</span>
-                                        <span class="text-2xl font-bold font-mono text-white">12</span>
+                                        <span id="objectsDetected" class="text-2xl font-bold font-mono text-white">12</span>
                                     </div>
                                     <div class="h-10 w-[1px] bg-white/10"></div>
                                     <div class="flex flex-col">
                                         <span
                                             class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Motion
                                             Score</span>
-                                        <span class="text-2xl font-bold font-mono text-yellow-400">HIGH</span>
+                                        <span id="motionScoreOverlay" class="text-2xl font-bold font-mono text-yellow-400">HIGH</span>
                                     </div>
                                 </div>
                                 <div class="flex gap-2">
@@ -422,7 +419,7 @@ Page: SENTINEL - AI Threat Detection Command Center
                             <span class="text-[10px] font-mono text-zinc-500">Primary Loading Dock B</span>
                         </div>
                         <div class="flex items-center gap-4 text-[10px] font-mono text-zinc-500">
-                            <span>FPS: 60.0</span>
+                            <span id="fpsCounter">FPS: 60.0</span>
                             <span>BITRATE: 8.4 MBPS</span>
                             <span>LATENCY: 12ms</span>
                         </div>
@@ -543,19 +540,19 @@ Page: SENTINEL - AI Threat Detection Command Center
                 <!-- Threat Level Section -->
                 <div class="p-6 border-b border-white/5">
                     <h3 class="text-xs font-bold uppercase tracking-widest text-white mb-4">Threat Status</h3>
-                    <div class="glass-card rounded-lg p-4 alert-active">
+                    <div id="threatCard" class="glass-card rounded-lg p-4 alert-active">
                         <div class="flex items-center justify-between mb-3">
                             <span class="text-[10px] font-mono text-zinc-500 uppercase">Current Level</span>
                             <div class="flex items-center gap-2">
-                                <div class="w-2 h-2 bg-[#ef233c] rounded-full animate-pulse"></div>
-                                <span class="text-xs font-bold text-[#ef233c] uppercase">HIGH</span>
+                                <div id="threatDot" class="w-2 h-2 bg-[#ef233c] rounded-full animate-pulse"></div>
+                                <span id="threatLevel" class="text-xs font-bold text-[#ef233c] uppercase">HIGH</span>
                             </div>
                         </div>
                         <div class="flex items-center gap-3">
-                            <iconify-icon icon="lucide:alert-triangle" class="text-3xl text-[#ef233c]"></iconify-icon>
+                            <iconify-icon id="threatIcon" icon="lucide:alert-triangle" class="text-3xl text-[#ef233c]"></iconify-icon>
                             <div>
-                                <span class="text-2xl font-bold font-manrope text-white">LEVEL 3</span>
-                                <p class="text-[10px] text-zinc-500">Active threat in sector</p>
+                                <span id="threatLevelLabel" class="text-2xl font-bold font-manrope text-white">LEVEL 3</span>
+                                <p id="threatDescription" class="text-[10px] text-zinc-500">Active threat in sector</p>
                             </div>
                         </div>
                     </div>
@@ -571,17 +568,17 @@ Page: SENTINEL - AI Threat Detection Command Center
                                 <iconify-icon icon="lucide:users" class="text-lg text-blue-400"></iconify-icon>
                                 <span class="text-[11px] text-zinc-400">Persons Detected</span>
                             </div>
-                            <span class="text-lg font-bold font-mono text-white">3</span>
+                            <span id="personsCount" class="text-lg font-bold font-mono text-white">3</span>
                         </div>
                     </div>
 
-                    <div class="glass-card rounded-lg p-3 border border-[#ef233c]/30">
+                    <div id="weaponCard" class="glass-card rounded-lg p-3 border border-[#ef233c]/30">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-3">
                                 <iconify-icon icon="lucide:crosshair" class="text-lg text-[#ef233c]"></iconify-icon>
                                 <span class="text-[11px] text-zinc-400">Weapon Detected</span>
                             </div>
-                            <span class="text-lg font-bold font-mono text-[#ef233c]">YES</span>
+                            <span id="weaponStatus" class="text-lg font-bold font-mono text-[#ef233c]">YES</span>
                         </div>
                     </div>
 
@@ -591,7 +588,7 @@ Page: SENTINEL - AI Threat Detection Command Center
                                 <iconify-icon icon="lucide:zap" class="text-lg text-yellow-400"></iconify-icon>
                                 <span class="text-[11px] text-zinc-400">Motion Score</span>
                             </div>
-                            <span class="text-lg font-bold font-mono text-yellow-400">78%</span>
+                            <span id="motionScore" class="text-lg font-bold font-mono text-yellow-400">78%</span>
                         </div>
                     </div>
 
@@ -601,7 +598,7 @@ Page: SENTINEL - AI Threat Detection Command Center
                                 <iconify-icon icon="lucide:activity" class="text-lg text-orange-400"></iconify-icon>
                                 <span class="text-[11px] text-zinc-400">Movement Score</span>
                             </div>
-                            <span class="text-lg font-bold font-mono text-orange-400">64%</span>
+                            <span id="movementScore" class="text-lg font-bold font-mono text-orange-400">64%</span>
                         </div>
                     </div>
                 </div>
@@ -616,7 +613,7 @@ Page: SENTINEL - AI Threat Detection Command Center
                         </div>
                     </div>
 
-                    <div class="flex-1 overflow-y-auto space-y-1 px-2 pb-2">
+                    <div id="alertFeed" class="flex-1 overflow-y-auto space-y-1 px-2 pb-2">
                         <!-- Critical Alert -->
                         <div class="p-3 bg-[#ef233c]/5 border border-[#ef233c]/20 rounded-lg relative overflow-hidden">
                             <div class="absolute left-0 top-0 bottom-0 w-1 bg-[#ef233c]"></div>
@@ -702,7 +699,7 @@ Page: SENTINEL - AI Threat Detection Command Center
 
                 <div class="flex gap-4 items-center animate-[marquee_20s_linear_infinite] whitespace-nowrap">
                     <span class="text-[10px] font-mono text-zinc-500 uppercase">// CAM_01: STREAMING</span>
-                    <span class="text-[10px] font-mono text-[#ef233c] uppercase">// THREAT_LEVEL: HIGH</span>
+                    <span id="footerThreat" class="text-[10px] font-mono text-[#ef233c] uppercase">// THREAT_LEVEL: HIGH</span>
                     <span class="text-[10px] font-mono text-zinc-500 uppercase">// YOLO_ENGINE: ACTIVE</span>
                     <span class="text-[10px] font-mono text-zinc-500 uppercase">// REAL-TIME AI DETECTION</span>
                 </div>
@@ -718,29 +715,7 @@ Page: SENTINEL - AI Threat Detection Command Center
             </div>
         </footer>
     </div>
+    <script src="script.js"></script>
 </body>
 
 </html>
-```
-<script>
-    async function fetchData() {
-        try {
-            const res = await fetch("http://localhost:5000/status");
-            const data = await res.json();
-
-            document.getElementById("threatLevel").innerText = data.threat;
-            document.getElementById("personsCount").innerText = data.persons;
-            document.getElementById("weaponStatus").innerText = data.weapon ? "YES" : "NO";
-            document.getElementById("motionScore").innerText = data.motion + "%";
-            document.getElementById("movementScore").innerText = data.movement + "%";
-
-        } catch (err) {
-            console.error(err);
-        }
-    }
-
-    // update every second
-    setInterval(fetchData, 1000);
-</script>
-Please reference this design and implement it into our codebase; Try to understand the structure, which part of our
-codebase is relevant and implement
