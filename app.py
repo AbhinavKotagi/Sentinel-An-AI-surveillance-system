@@ -402,7 +402,7 @@ else:
                 cv2.line(standby, (i,0), (i,360), (8,20,32), 1)
             for i in range(0, 360, 40):
                 cv2.line(standby, (0,i), (640,i), (8,20,32), 1)
-            video_placeholder.image(standby, channels="BGR", use_container_width=True)
+            video_placeholder.image(standby, channels="BGR", use_column_width=True)
 
         st.markdown('<div class="section-title">FRAME DATA · JSON</div>', unsafe_allow_html=True)
         json_placeholder = st.empty()
@@ -736,7 +736,7 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
 
             # [OPTIMIZATION] Always draw & display the latest frame for smooth video
             rgb_frame = draw_overlays(frame, detections, threat_level)
-            video_placeholder.image(rgb_frame, use_container_width=True)
+            video_placeholder.image(rgb_frame, use_column_width=True)
 
             # ── JSON display ──
             json_str = (
