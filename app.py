@@ -665,8 +665,9 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                 threshold_override=effective_fight_thresh,
             )
             fight_detected = fight_result["fight_detected"]
+            fight_reason = fight_result.get("reason", "")
 
-            threat_level, reason = compute_threat_level(weapon_detected, fight_detected, people_count)
+            threat_level, reason = compute_threat_level(weapon_detected, fight_detected, people_count, fight_reason)
             det_type = classify_detection_type(weapon_detected, fight_detected)
 
             # ── Build ML signal vector ──
@@ -703,12 +704,9 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
             }
 
             # ── Alert + Feedback logging ──
-            # Optionally log SAFE frames if there's activity to allow reviewing missed threats
-            log_safe_frame = (threat_level == "SAFE" and (people_count > 0 or motion_score > 0.3))
             alert_record = alert_sys.trigger(
                 frame, threat_level, reason,
                 detection_type=det_type, signals=signals,
-                log_safe=log_safe_frame
             )
             if alert_record:
                 if alert_record["level"] != "SAFE":
@@ -718,21 +716,6 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                         "msg": alert_record["reason"],
                     })
                     st.session_state.total_alerts += 1
-                # Log to feedback DB for ML training
-                feedback_store.record_alert(
-                    alert_id=alert_record["alert_id"],
-                    timestamp=alert_record["timestamp_iso"],
-                    threat_level=alert_record["level"],
-                    reason=alert_record["reason"],
-                    snapshot_path=alert_record["snapshot"],
-                    det_type=alert_record["detection_type"],
-                    signals=alert_record["signals"],
-                    ml_prediction=ml_prediction,
-                )
-
-                # Auto-retrain if enough new feedback
-                if meta_clf.should_retrain(feedback_store):
-                    meta_clf.train(feedback_store)
 
             # [OPTIMIZATION] Always draw & display the latest frame for smooth video
             rgb_frame = draw_overlays(frame, detections, threat_level)

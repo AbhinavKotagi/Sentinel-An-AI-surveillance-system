@@ -77,12 +77,7 @@ class AlertSystem:
         # Generate unique alert ID
         alert_id = str(uuid.uuid4())[:12]
 
-        snapshot_path = os.path.join(self.alert_dir, f"{ts_file}.jpg")
-        try:
-            cv2.imwrite(snapshot_path, frame)
-        except Exception as exc:
-            print(f"[ERROR] Snapshot save failed: {exc}")
-            snapshot_path = None
+        snapshot_path = None
 
         colour = _COLOURS.get(threat_level, "")
         reset = _COLOURS["RESET"]
