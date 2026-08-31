@@ -11,6 +11,7 @@ Falls back gracefully if either model is missing.
 import os
 import cv2
 import numpy as np
+import torch  # Added for GPU support
 
 try:
     from ultralytics import YOLO
@@ -51,8 +52,9 @@ class ThreatDetector:
 
         # ── Load person detection model (yolov8n — auto-downloads) ──
         try:
-            self.person_model = YOLO(PERSON_MODEL_PATH)
-            print(f"[INFO] Person model loaded: {PERSON_MODEL_PATH}")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.person_model = YOLO(PERSON_MODEL_PATH, device=device)
+            print(f"[INFO] Person model loaded ({device}): {PERSON_MODEL_PATH}")
         except Exception:
             try:
                 print("[INFO] Downloading yolov8n.pt for person detection...")
@@ -64,10 +66,12 @@ class ThreatDetector:
         # ── Load custom weapon model ──
         if os.path.isfile(model_path):
             try:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
                 self.weapon_model = YOLO(model_path)
+                self.weapon_model.to(device)
                 # Print the class names so user can see what the model detects
                 names = self.weapon_model.names
-                print(f"[INFO] Weapon model loaded: {model_path}")
+                print(f"[INFO] Weapon model loaded ({device}): {model_path}")
                 print(f"       Classes: {names}")
             except Exception as exc:
                 print(f"[ERROR] Failed to load weapon model: {exc}")

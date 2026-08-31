@@ -9,13 +9,13 @@ import pandas as pd
 from datetime import datetime
 from collections import deque
 
-from detector import ThreatDetector
-from pose import PoseEstimator
-from motion import MotionDetector
-from logic import FightDetector, compute_threat_level, classify_detection_type
-from alert import AlertSystem
-from feedback import FeedbackStore, ThreatMetaClassifier, ParameterOptimizer
-from review_ui import render_review_panel, render_ml_status_sidebar, render_calibration_result
+from backend.detector import ThreatDetector
+from backend.pose import PoseEstimator
+from backend.motion import MotionDetector
+from backend.logic import FightDetector, compute_threat_level, classify_detection_type
+from backend.alert import AlertSystem
+from backend.feedback import FeedbackStore, ThreatMetaClassifier, ParameterOptimizer
+from backend.review_ui import render_review_panel, render_ml_status_sidebar, render_calibration_result
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -402,7 +402,7 @@ else:
                 cv2.line(standby, (i,0), (i,360), (8,20,32), 1)
             for i in range(0, 360, 40):
                 cv2.line(standby, (0,i), (640,i), (8,20,32), 1)
-            video_placeholder.image(standby, channels="BGR", use_column_width=True)
+            video_placeholder.image(standby, channels="BGR", width='stretch')
 
         st.markdown('<div class="section-title">FRAME DATA · JSON</div>', unsafe_allow_html=True)
         json_placeholder = st.empty()
@@ -418,8 +418,8 @@ else:
         if len(st.session_state.graph_data) > 1:
             _gdf = pd.DataFrame(list(st.session_state.graph_data))
             _gdf.set_index("time", inplace=True)
-            graph_threat_placeholder.line_chart(_gdf[["threat"]], height=150, use_container_width=True)
-            graph_signal_placeholder.line_chart(_gdf[["motion_score", "fight_score"]], height=150, use_container_width=True)
+            graph_threat_placeholder.line_chart(_gdf[["threat"]], height=150, width='stretch')
+            graph_signal_placeholder.line_chart(_gdf[["motion_score", "fight_score"]], height=150, width='stretch')
 
     with col_panel:
         st.markdown('<div class="section-title">THREAT STATUS</div>', unsafe_allow_html=True)
@@ -578,15 +578,26 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                 st.warning("⚠ Please enter a valid IP camera URL.")
                 st.session_state.running = False
                 st.stop()
-            cap = cv2.VideoCapture(wifi_url.strip(), cv2.CAP_FFMPEG)
-            # [OPTIMIZATION] Minimise buffer for live IP stream
+            # Try default backend first
+            cap = cv2.VideoCapture(wifi_url.strip())
+            # If not opened, try explicit FFMPEG backend (often needed on Windows)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(wifi_url.strip(), cv2.CAP_FFMPEG)
+            # If still not opened, try MJPEG backend if available
+            if not cap.isOpened() and hasattr(cv2, "CAP_OPENCV_MJPEG"):
+                cap = cv2.VideoCapture(wifi_url.strip(), cv2.CAP_OPENCV_MJPEG)
+            # As a last resort, fall back to webcam and inform the user
+            if not cap.isOpened():
+                st.warning("⚠ Cannot connect to WiFi camera. Falling back to webcam…")
+                cap = cv2.VideoCapture(0)
+            # Reduce buffer for live IP stream
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            if not cap.isOpened():
-                st.warning("⚠ Cannot connect to WiFi camera. Falling back to webcam...")
-                cap = cv2.VideoCapture(0)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Optional debug info
+            if st.session_state.get("debug", False):
+                backend = getattr(cap, "getBackendName", lambda: "unknown")()
+                st.info(f"WiFi camera opened: {cap.isOpened()}, backend={backend}")
         else:
             if uploaded_file is not None:
                 import tempfile
@@ -719,7 +730,7 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
 
             # [OPTIMIZATION] Always draw & display the latest frame for smooth video
             rgb_frame = draw_overlays(frame, detections, threat_level)
-            video_placeholder.image(rgb_frame, use_column_width=True)
+            video_placeholder.image(rgb_frame, width='stretch')
 
             # ── JSON display ──
             json_str = (
@@ -757,10 +768,10 @@ if st.session_state.running and not st.session_state.get("review_mode", False):
                 df.set_index("time", inplace=True)
 
                 # Primary graph: threat level over time
-                graph_threat_placeholder.line_chart(df[["threat"]], height=150, use_container_width=True)
+                graph_threat_placeholder.line_chart(df[["threat"]], height=150, width='stretch')
 
                 # Secondary graph: motion_score and fight_score
-                graph_signal_placeholder.line_chart(df[["motion_score", "fight_score"]], height=150, use_container_width=True)
+                graph_signal_placeholder.line_chart(df[["motion_score", "fight_score"]], height=150, width='stretch')
 
             elapsed = time.time() - t0
             if elapsed < frame_delay:
